@@ -1,139 +1,28 @@
 #!/usr/bin/env python3
 """
-OpenAI PDF to Speech Client
-Loads a PDF using OpenAI's API and converts it to natural speech with streaming audio.
+Coordinator: PDF to Speech process runner
+Runs model_to_text.py and tts_and_play.py in correct sequence.
 """
 
 import sys
 import os
-import asyncio
 import argparse
+import subprocess
+import time
 from pathlib import Path
-import pygame
-import io
-from openai import OpenAI
 
-# Initialize pygame mixer for audio playback
-pygame.mixer.init()
+def wait_for_file(filepath, timeout=30, interval=0.5):
+    """Wait up to timeout seconds for the file to appear."""
+    start = time.time()
+    while not Path(filepath).exists():
+        if time.time() - start > timeout:
+            print(f"Timeout waiting for {filepath}")
+            sys.exit(1)
+        time.sleep(interval)
 
-SYSTEM_PROMPT = """
-You are a document transcription assistant. 
-When given a document or transcript extraction request, return only the text extracted from the document, formatted for text to speech. 
-Do not add any introduction, explanation or commentary (such as ```, 'Certainly', 'Here is', or '---'). 
-The text will be passed to the OpenAI text-to-speech model, so it should be clean and natural for speech synthesis.
-Make sure there are are hints for natural speech, such as removing unnecessary line breaks, fixing formatting artifacts, 
-and ensuring it reads smoothly.
-Leave clear line breaks where appropriate, such as between paragraphs or sections, as these will be used to create pauses in the speech synthesis.
-"""
-
-
-def load_pdf_with_openai(client, pdf_path):
-    """Load PDF content using OpenAI's file upload and processing capability."""
-    try:
-        # Upload the PDF file
-        with open(pdf_path, "rb") as f:
-            file_response = client.files.create(
-                file=f,
-                purpose="assistants"
-            )
-
-        # Create a message to extract text from the PDF
-        response = client.chat.completions.create(
-            model="gpt-4.1",  # Updated to use gpt-4o instead of gpt-4.1
-            messages=[
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Please extract all the text from this PDF and format it naturally for text-to-speech conversion. Remove any formatting artifacts, fix line breaks, and ensure it reads smoothly as natural speech. Return only the cleaned text content."
-                        },
-                        {
-                            "type": "file",
-                            "file": {  # Changed from "file_id" to nested "file" object
-                                "file_id": file_response.id
-                            }
-                        }
-                    ]
-                }
-            ]
-        )
-
-        # Clean up the uploaded file
-        client.files.delete(file_response.id)
-
-        return response.choices[0].message.content
-
-    except Exception as e:
-        print(f"Error processing PDF: {e}")
-        return None
-
-
-def save_text_file(text_content, pdf_path):
-    """Save the processed text as a .pdf.txt file."""
-    txt_path = f"{pdf_path}.txt"
-    with open(txt_path, 'w', encoding='utf-8') as f:
-        f.write(text_content)
-    print(f"Saved processed text to: {txt_path}")
-    return txt_path
-
-
-async def text_to_speech_streaming(client, text_content, pdf_path):
-    """Convert text to speech with streaming audio playback."""
-    try:
-        # Split text into chunks for streaming
-        chunk_size = 1000  # Adjust based on needs
-        text_chunks = [text_content[i:i + chunk_size] for i in range(0, len(text_content), chunk_size)]
-
-        audio_path = f"{pdf_path}.mp3"
-        audio_chunks = []
-
-        print("Converting to speech and playing...")
-
-        for i, chunk in enumerate(text_chunks):
-            if not chunk.strip():
-                continue
-
-            print(f"Processing chunk {i + 1}/{len(text_chunks)}")
-
-            # Generate speech for this chunk
-            response = client.audio.speech.create(
-                model="tts-1",
-                voice="alloy",
-                input=chunk,
-                response_format="mp3"
-            )
-
-            # Get audio data
-            audio_data = response.content
-            audio_chunks.append(audio_data)
-
-            # Play audio immediately
-            pygame.mixer.music.load(io.BytesIO(audio_data))
-            pygame.mixer.music.play()
-
-            # Wait for this chunk to finish before starting the next
-            while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.1)
-
-        # Save complete audio file
-        with open(audio_path, 'wb') as f:
-            for chunk in audio_chunks:
-                f.write(chunk)
-
-        print(f"Saved complete audio to: {audio_path}")
-
-    except Exception as e:
-        print(f"Error in text-to-speech conversion: {e}")
-
-
-async def main():
-    parser = argparse.ArgumentParser(description="Convert PDF to speech using OpenAI")
-    parser.add_argument("pdf_path", help="Path to the PDF file")
+def main():
+    parser = argparse.ArgumentParser(description="Convert PDF to speech (Coordinator)")
+    parser.add_argument("pdf_path", help="Path to PDF file")
     args = parser.parse_args()
 
     pdf_path = Path(args.pdf_path)
@@ -141,32 +30,39 @@ async def main():
         print(f"Error: PDF file not found: {pdf_path}")
         sys.exit(1)
 
-    # Check for OpenAI API key
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY environment variable not set")
-        sys.exit(1)
+    txt_path = str(pdf_path) + ".txt"
 
-    # Initialize OpenAI client
-    client = OpenAI()  # Uses OPENAI_API_KEY environment variable
+    # Start the model output streaming process
+    print("[pdf_to_speech] Extracting text from PDF...")
+    model_proc = subprocess.Popen(
+        [sys.executable, "model_to_text.py", str(pdf_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
 
-    print(f"Loading PDF: {pdf_path}")
+    # Start the TTS/playback process after file appears (or immediately for streaming)
+    wait_for_file(txt_path, timeout=60)
+    print("[pdf_to_speech] Starting speech synthesis and playback...")
 
-    # Extract text from PDF
-    text_content = load_pdf_with_openai(client, str(pdf_path))
-    if not text_content:
-        print("Failed to extract text from PDF")
-        sys.exit(1)
+    tts_proc = subprocess.Popen(
+        [sys.executable, "tts_and_play.py", txt_path],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
 
-    print("PDF text extracted successfully")
+    # Forward output from both subprocesses
+    while True:
+        model_out = model_proc.stdout.readline() if not model_proc.poll() else ""
+        tts_out = tts_proc.stdout.readline() if not tts_proc.poll() else ""
 
-    # Save processed text
-    save_text_file(text_content, str(pdf_path))
+        if model_out:
+            print("[model_to_text]", model_out, end="")
+        if tts_out:
+            print("[tts_and_play]", tts_out, end="")
 
-    # Convert to speech and play
-    await text_to_speech_streaming(client, text_content, str(pdf_path))
+        if model_proc.poll() is not None and tts_proc.poll() is not None:
+            print("[pdf_to_speech] All done.")
+            break
 
-    print("Conversion complete!")
-
+        time.sleep(0.1)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
