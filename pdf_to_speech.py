@@ -16,6 +16,16 @@ from openai import OpenAI
 # Initialize pygame mixer for audio playback
 pygame.mixer.init()
 
+SYSTEM_PROMPT = """
+You are a document transcription assistant. 
+When given a document or transcript extraction request, return only the text extracted from the document, formatted for text to speech. 
+Do not add any introduction, explanation or commentary (such as ```, 'Certainly', 'Here is', or '---'). 
+The text will be passed to the OpenAI text-to-speech model, so it should be clean and natural for speech synthesis.
+Make sure there are are hints for natural speech, such as removing unnecessary line breaks, fixing formatting artifacts, 
+and ensuring it reads smoothly.
+Leave clear line breaks where appropriate, such as between paragraphs or sections, as these will be used to create pauses in the speech synthesis.
+"""
+
 
 def load_pdf_with_openai(client, pdf_path):
     """Load PDF content using OpenAI's file upload and processing capability."""
@@ -29,8 +39,12 @@ def load_pdf_with_openai(client, pdf_path):
 
         # Create a message to extract text from the PDF
         response = client.chat.completions.create(
-            model="gpt-4o",  # Updated to use gpt-4o instead of gpt-4.1
+            model="gpt-4.1",  # Updated to use gpt-4o instead of gpt-4.1
             messages=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT,
+                },
                 {
                     "role": "user",
                     "content": [
