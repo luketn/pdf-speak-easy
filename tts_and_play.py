@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import io
 import pygame
 from openai import OpenAI
+import time
 
 pygame.mixer.init()
 
@@ -25,7 +26,9 @@ async def tts_paragraph(client, paragraph, idx):
     )
     return idx, response.content
 
-async def play_audio(bytes_io):
+async def play_audio(bytes_io, paragraph=None):
+    if paragraph:
+        print(f"\n\033[92mNow speaking:\033[0m {paragraph}\n")  # Prints the paragraph in green
     pygame.mixer.music.load(io.BytesIO(bytes_io))
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
@@ -60,7 +63,11 @@ async def watch_and_tts(txt_path):
 
         # Play audio as soon as the earliest not-yet-played idx is ready
         while playing_idx in results:
-            await play_audio(results[playing_idx])
+            # Access curr_text here, after it's been read from the file
+            paragraphs = [p.strip() for p in curr_text.split(PARAGRAPH_SEPARATOR) if p.strip()]
+            paragraph_to_speak = paragraphs[playing_idx] if playing_idx < len(paragraphs) else None
+
+            await play_audio(results[playing_idx], paragraph_to_speak)
             del results[playing_idx]
             playing_idx += 1
 
