@@ -3,7 +3,14 @@
     "allow": [
       "Bash(source:*)",
       "Bash(pip install:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(ls:*)",
+      "Bash(afinfo:*)",
+      "Bash(rm:*)",
+      "Bash(afconvert:*)",
+      "Bash(afplay:*)",
+      "Bash(/usr/bin/python3:*)",
+      "Bash(python:*)"
     ],
     "deny": []
   }
